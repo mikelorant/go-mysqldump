@@ -23,15 +23,17 @@ Data struct to configure dump behavior
     LockTables:       Lock all tables for the duration of the dump
 */
 type Data struct {
-	Out              io.Writer
-	Connection       *sql.DB
-	IgnoreTables     []string
-	MaxAllowedPacket int
-	LockTables       bool
+	Out                       io.Writer
+	Connection                *sql.DB
+	IgnoreTables              []string
+	SelectedTablesForDataDump []string
+	MaxAllowedPacket          int
+	LockTables                bool
 
 	tx         *sql.Tx
 	headerTmpl *template.Template
 	tableTmpl  *template.Template
+	viewTmpl   *template.Template
 	footerTmpl *template.Template
 	err        error
 }
@@ -44,6 +46,21 @@ type table struct {
 	data   *Data
 	rows   *sql.Rows
 	values []interface{}
+}
+
+type view struct {
+	Name string
+	Err  error
+
+	cols   []string
+	data   *Data
+	rows   *sql.Rows
+	values []interface{}
+}
+
+type tableInfo struct {
+	Name string
+	Type string
 }
 
 type metaData struct {
@@ -116,6 +133,18 @@ LOCK TABLES {{ .NameEsc }} WRITE;
 UNLOCK TABLES;
 `
 
+// Takes a *table
+const viewTmpl = `
+--
+-- Definition for view {{ .NameEsc }}
+--
+
+DROP VIEW IF EXISTS {{ .NameEsc }};
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+ SET character_set_client = utf8mb4 ;
+{{ .CreateSQL }};
+`
+
 const nullType = "NULL"
 
 // Dump data using struct
@@ -161,7 +190,7 @@ func (data *Data) Dump() error {
 			if index != 0 {
 				b.WriteString(",")
 			}
-			b.WriteString("`" + name + "` READ /*!32311 LOCAL */")
+			b.WriteString("`" + name.Name + "` READ /*!32311 LOCAL */")
 		}
 
 		if _, err := data.Connection.Exec(b.String()); err != nil {
@@ -171,9 +200,15 @@ func (data *Data) Dump() error {
 		defer data.Connection.Exec("UNLOCK TABLES")
 	}
 
-	for _, name := range tables {
-		if err := data.dumpTable(name); err != nil {
-			return err
+	for _, info := range tables {
+		if info.Type == "VIEW" {
+			if err := data.dumpView(info.Name); err != nil {
+				return err
+			}
+		} else {
+			if err := data.dumpTable(info.Name); err != nil {
+				return err
+			}
 		}
 	}
 	if data.err != nil {
@@ -211,11 +246,26 @@ func (data *Data) dumpTable(name string) error {
 	return data.writeTable(table)
 }
 
-func (data *Data) writeTable(table *table) error {
+func (data *Data) dumpView(name string) error {
+	if data.err != nil {
+		return data.err
+	}
+	table := data.createView(name)
+	return data.writeView(table)
+}
+
+func (data *Data) writeTable(table *table) (err error) {
 	if err := data.tableTmpl.Execute(data.Out, table); err != nil {
 		return err
 	}
 	return table.Err
+}
+
+func (data *Data) writeView(view *view) (err error) {
+	if err := data.viewTmpl.Execute(data.Out, view); err != nil {
+		return err
+	}
+	return view.Err
 }
 
 // MARK: get methods
@@ -232,6 +282,11 @@ func (data *Data) getTemplates() (err error) {
 		return
 	}
 
+	data.viewTmpl, err = template.New("mysqldumpTable").Parse(viewTmpl)
+	if err != nil {
+		return
+	}
+
 	data.footerTmpl, err = template.New("mysqldumpTable").Parse(footerTmpl)
 	if err != nil {
 		return
@@ -239,10 +294,10 @@ func (data *Data) getTemplates() (err error) {
 	return
 }
 
-func (data *Data) getTables() ([]string, error) {
-	tables := make([]string, 0)
+func (data *Data) getTables() ([]tableInfo, error) {
+	tables := make([]tableInfo, 0)
 
-	rows, err := data.tx.Query("SHOW TABLES")
+	rows, err := data.tx.Query("SHOW FULL TABLES")
 	if err != nil {
 		return tables, err
 	}
@@ -250,11 +305,15 @@ func (data *Data) getTables() ([]string, error) {
 
 	for rows.Next() {
 		var table sql.NullString
-		if err := rows.Scan(&table); err != nil {
+		var tType sql.NullString
+		if err := rows.Scan(&table, &tType); err != nil {
 			return tables, err
 		}
 		if table.Valid && !data.isIgnoredTable(table.String) {
-			tables = append(tables, table.String)
+			tables = append(tables, tableInfo{
+				Name: table.String,
+				Type: tType.String,
+			})
 		}
 	}
 	return tables, rows.Err()
@@ -262,6 +321,15 @@ func (data *Data) getTables() ([]string, error) {
 
 func (data *Data) isIgnoredTable(name string) bool {
 	for _, item := range data.IgnoreTables {
+		if item == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (data *Data) isSelectedTablesForDataDump(name string) bool {
+	for _, item := range data.SelectedTablesForDataDump {
 		if item == name {
 			return true
 		}
@@ -285,8 +353,19 @@ func (data *Data) createTable(name string) *table {
 	}
 }
 
+func (data *Data) createView(name string) *view {
+	return &view{
+		Name: name,
+		data: data,
+	}
+}
+
 func (table *table) NameEsc() string {
 	return "`" + table.Name + "`"
+}
+
+func (view *view) NameEsc() string {
+	return "`" + view.Name + "`"
 }
 
 func (table *table) CreateSQL() (string, error) {
@@ -294,11 +373,25 @@ func (table *table) CreateSQL() (string, error) {
 	if err := table.data.tx.QueryRow("SHOW CREATE TABLE "+table.NameEsc()).Scan(&tableReturn, &tableSQL); err != nil {
 		return "", err
 	}
-
 	if tableReturn.String != table.Name {
 		return "", errors.New("Returned table is not the same as requested table")
 	}
+	fmt.Println(tableSQL.String)
+	return tableSQL.String, nil
+}
 
+func (view *view) CreateSQL() (string, error) {
+	var tableReturn, tableSQL, a, b sql.NullString
+
+	if err := view.data.tx.QueryRow("SHOW CREATE VIEW "+view.NameEsc()).Scan(&tableReturn, &tableSQL, &a, &b); err != nil {
+		return "", err
+	}
+	fmt.Println(fmt.Sprintf("||%+v||||%+v||||%+v||||%+v||", tableReturn, tableSQL, a, b))
+
+	if tableReturn.String != view.Name {
+		return "", errors.New("Returned view is not the same as requested view")
+	}
+	fmt.Println(tableSQL.String)
 	return tableSQL.String, nil
 }
 
@@ -349,6 +442,56 @@ func (table *table) initColumnData() error {
 		}
 	}
 	table.cols = result
+	return nil
+}
+
+func (view *view) initColumnData() error {
+	colInfo, err := view.data.tx.Query("SHOW COLUMNS FROM " + view.NameEsc())
+	if err != nil {
+		return err
+	}
+	defer colInfo.Close()
+
+	cols, err := colInfo.Columns()
+	if err != nil {
+		return err
+	}
+
+	fieldIndex, extraIndex := -1, -1
+	for i, col := range cols {
+		switch col {
+		case "Field", "field":
+			fieldIndex = i
+		case "Extra", "extra":
+			extraIndex = i
+		}
+		if fieldIndex >= 0 && extraIndex >= 0 {
+			break
+		}
+	}
+	if fieldIndex < 0 || extraIndex < 0 {
+		return errors.New("database column information is malformed")
+	}
+
+	info := make([]sql.NullString, len(cols))
+	scans := make([]interface{}, len(cols))
+	for i := range info {
+		scans[i] = &info[i]
+	}
+
+	var result []string
+	for colInfo.Next() {
+		// Read into the pointers to the info marker
+		if err := colInfo.Scan(scans...); err != nil {
+			return err
+		}
+
+		// Ignore the virtual columns
+		if !info[extraIndex].Valid || !strings.Contains(info[extraIndex].String, "VIRTUAL") {
+			result = append(result, info[fieldIndex].String)
+		}
+	}
+	view.cols = result
 	return nil
 }
 
@@ -489,6 +632,11 @@ func (table *table) RowBuffer() *bytes.Buffer {
 
 func (table *table) Stream() <-chan string {
 	valueOut := make(chan string, 1)
+	if !table.data.isSelectedTablesForDataDump(table.Name) {
+		fmt.Println("Skiping Table:", table.Name)
+		close(valueOut)
+		return valueOut
+	}
 	go func() {
 		defer close(valueOut)
 		var insert bytes.Buffer
