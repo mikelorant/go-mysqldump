@@ -376,7 +376,6 @@ func (table *table) CreateSQL() (string, error) {
 	if tableReturn.String != table.Name {
 		return "", errors.New("Returned table is not the same as requested table")
 	}
-	fmt.Println(tableSQL.String)
 	return tableSQL.String, nil
 }
 
@@ -386,12 +385,10 @@ func (view *view) CreateSQL() (string, error) {
 	if err := view.data.tx.QueryRow("SHOW CREATE VIEW "+view.NameEsc()).Scan(&tableReturn, &tableSQL, &a, &b); err != nil {
 		return "", err
 	}
-	fmt.Println(fmt.Sprintf("||%+v||||%+v||||%+v||||%+v||", tableReturn, tableSQL, a, b))
 
 	if tableReturn.String != view.Name {
 		return "", errors.New("Returned view is not the same as requested view")
 	}
-	fmt.Println(tableSQL.String)
 	return tableSQL.String, nil
 }
 
@@ -636,6 +633,8 @@ func (table *table) Stream() <-chan string {
 		fmt.Println("Skiping Table:", table.Name)
 		close(valueOut)
 		return valueOut
+	} else {
+		fmt.Println("Dumping the Data From Static Table:", table.Name)
 	}
 	go func() {
 		defer close(valueOut)
