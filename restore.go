@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-func Restore(filepath string, db *sql.DB) error {
+func Restore(filepath string, db *sql.DB, restoreType string) error {
 	file, err := os.Open(filepath)
 
 	if err != nil {
@@ -43,8 +43,18 @@ func Restore(filepath string, db *sql.DB) error {
 			}
 		}
 		if strings.HasSuffix(text, ";") {
+			if strings.Contains(query, "SQL SECURITY DEFINER VIEW") && restoreType == "Table" {
+				query = ""
+				continue
+			}
+			if !strings.Contains(query, "SQL SECURITY DEFINER VIEW") && restoreType == "View" {
+				query = ""
+				continue
+			}
 			r, err := tx.Exec(query)
 			if err != nil {
+				fmt.Println(query)
+				fmt.Println(err)
 				tx.Rollback()
 				return err
 			} else {
