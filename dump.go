@@ -23,6 +23,7 @@ Data struct to configure dump behavior
     LockTables:       Lock all tables for the duration of the dump
 */
 type Data struct {
+	OutFilePath               string
 	Out                       io.Writer
 	Connection                *sql.DB
 	IgnoreTables              []string
