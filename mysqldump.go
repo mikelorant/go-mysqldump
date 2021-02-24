@@ -37,8 +37,9 @@ func Register(db *sql.DB, dir, format string) (*Data, error) {
 	}
 
 	return &Data{
-		Out:        f,
-		Connection: db,
+		OutFilePath: p,
+		Out:         f,
+		Connection:  db,
 	}, nil
 }
 
