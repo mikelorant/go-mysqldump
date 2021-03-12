@@ -24,6 +24,8 @@ Data struct to configure dump behavior
 */
 type Data struct {
 	OutFilePath               string
+	DataOnly                  bool
+	SchemaOnly                bool
 	Out                       io.Writer
 	Connection                *sql.DB
 	IgnoreTables              []string
@@ -109,7 +111,6 @@ const footerTmpl = `/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 -- Dump completed on {{ .CompleteTime }}
 `
 
-// Takes a *table
 const tableTmpl = `
 --
 -- Table structure for table {{ .NameEsc }}
@@ -133,8 +134,19 @@ LOCK TABLES {{ .NameEsc }} WRITE;
 /*!40000 ALTER TABLE {{ .NameEsc }} ENABLE KEYS */;
 UNLOCK TABLES;
 `
+const tableTmplDataOnly = `
+--
+-- Dumping data for table {{ .NameEsc }}
+--
 
-// Takes a *table
+LOCK TABLES {{ .NameEsc }} WRITE;
+/*!40000 ALTER TABLE {{ .NameEsc }} DISABLE KEYS */;
+{{ range $value := .Stream }}
+{{- $value }}
+{{ end -}}
+/*!40000 ALTER TABLE {{ .NameEsc }} ENABLE KEYS */;
+UNLOCK TABLES;
+`
 const viewTmpl = `
 --
 -- Definition for view {{ .NameEsc }}
@@ -273,12 +285,16 @@ func (data *Data) writeView(view *view) (err error) {
 
 // getTemplates initializes the templates on data from the constants in this file
 func (data *Data) getTemplates() (err error) {
+
 	data.headerTmpl, err = template.New("mysqldumpHeader").Parse(headerTmpl)
 	if err != nil {
 		return
 	}
-
-	data.tableTmpl, err = template.New("mysqldumpTable").Parse(tableTmpl)
+	if data.DataOnly {
+		data.tableTmpl, err = template.New("mysqldumpTable").Parse(tableTmplDataOnly)
+	} else {
+		data.tableTmpl, err = template.New("mysqldumpTable").Parse(tableTmpl)
+	}
 	if err != nil {
 		return
 	}
@@ -311,10 +327,12 @@ func (data *Data) getTables() ([]tableInfo, error) {
 			return tables, err
 		}
 		if table.Valid && !data.isIgnoredTable(table.String) {
-			tables = append(tables, tableInfo{
-				Name: table.String,
-				Type: tType.String,
-			})
+			if data.isSelectedTablesForDataDump(table.String) && data.DataOnly || !data.DataOnly {
+				tables = append(tables, tableInfo{
+					Name: table.String,
+					Type: tType.String,
+				})
+			}
 		}
 	}
 	return tables, rows.Err()
@@ -630,7 +648,7 @@ func (table *table) RowBuffer() *bytes.Buffer {
 
 func (table *table) Stream() <-chan string {
 	valueOut := make(chan string, 1)
-	if !table.data.isSelectedTablesForDataDump(table.Name) {
+	if !table.data.isSelectedTablesForDataDump(table.Name) || table.data.SchemaOnly {
 		fmt.Println("Skiping Table:", table.Name)
 		close(valueOut)
 		return valueOut
