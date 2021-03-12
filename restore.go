@@ -51,14 +51,13 @@ func Restore(filepath string, db *sql.DB, restoreType string) error {
 				query = ""
 				continue
 			}
-			r, err := tx.Exec(query)
+			query = strings.ReplaceAll(query, "CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci", "CHARSET=utf8 COLLATE=utf8_general_ci")
+			_, err := tx.Exec(query)
 			if err != nil {
 				fmt.Println(query)
 				fmt.Println(err)
 				tx.Rollback()
 				return err
-			} else {
-				fmt.Println(r.RowsAffected())
 			}
 			query = ""
 		}
