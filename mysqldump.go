@@ -40,6 +40,7 @@ func Register(db *sql.DB, dir, format string) (*Data, error) {
 		OutFilePath: p,
 		Out:         f,
 		Connection:  db,
+		AllTables    true,
 	}, nil
 }
 
@@ -48,6 +49,7 @@ func Dump(db *sql.DB, out io.Writer) error {
 	return (&Data{
 		Connection: db,
 		Out:        out,
+		AllTables   true,
 	}).Dump()
 }
 
