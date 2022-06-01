@@ -348,6 +348,10 @@ func (data *Data) isIgnoredTable(name string) bool {
 }
 
 func (data *Data) isSelectedTablesForDataDump(name string) bool {
+    if len(data.SelectedTablesForDataDump) == 0 {
+        return true
+    }
+
 	for _, item := range data.SelectedTablesForDataDump {
 		if item == name {
 			return true
