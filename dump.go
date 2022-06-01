@@ -348,6 +348,10 @@ func (data *Data) isIgnoredTable(name string) bool {
 }
 
 func (data *Data) isSelectedTablesForDataDump(name string) bool {
+    if len(data.SelectedTablesForDataDump) == 0 {
+        return true
+    }
+
 	for _, item := range data.SelectedTablesForDataDump {
 		if item == name {
 			return true
@@ -649,11 +653,8 @@ func (table *table) RowBuffer() *bytes.Buffer {
 func (table *table) Stream() <-chan string {
 	valueOut := make(chan string, 1)
 	if !table.data.isSelectedTablesForDataDump(table.Name) || table.data.SchemaOnly {
-		fmt.Println("Skiping Table:", table.Name)
 		close(valueOut)
 		return valueOut
-	} else {
-		fmt.Println("Dumping the Data From Static Table:", table.Name)
 	}
 	go func() {
 		defer close(valueOut)
