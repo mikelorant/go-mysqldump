@@ -30,6 +30,7 @@ type Data struct {
 	Connection                *sql.DB
 	IgnoreTables              []string
 	SelectedTablesForDataDump []string
+	AllTables                 bool
 	MaxAllowedPacket          int
 	LockTables                bool
 
@@ -348,6 +349,10 @@ func (data *Data) isIgnoredTable(name string) bool {
 }
 
 func (data *Data) isSelectedTablesForDataDump(name string) bool {
+    if data.AllTables {
+        return true
+    }
+
 	for _, item := range data.SelectedTablesForDataDump {
 		if item == name {
 			return true
