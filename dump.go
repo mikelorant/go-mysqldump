@@ -566,7 +566,7 @@ func reflectColumnType(tp *sql.ColumnType) reflect.Type {
 	switch tp.DatabaseTypeName() {
 	case "BLOB", "BINARY":
 		return reflect.TypeOf(sql.RawBytes{})
-	case "VARCHAR", "TEXT", "DECIMAL", "JSON", "DATETIME":
+	case "VARCHAR", "TEXT", "DECIMAL", "JSON", "DATETIME", "DATE", "TIMESTAMP":
 		return reflect.TypeOf(sql.NullString{})
 	case "BIGINT", "TINYINT", "INT":
 		return reflect.TypeOf(sql.NullInt64{})
